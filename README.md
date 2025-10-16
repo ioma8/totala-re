@@ -13,6 +13,8 @@ Rapid reverse engineering of Total Annihilation’s engine with emphasis on HPI 
 - **Status** – HPI/SQSH formats decoded, TMH audio normalised, groundwork laid for engine reimplementation.
 
 ## Tool Usage
+
+### Extracting HPI Archives
 ```bash
 # List archive contents (console view)
 python3 hpi_parser.py totala1.hpi --list
@@ -20,17 +22,55 @@ python3 hpi_parser.py totala1.hpi --list
 # Extract everything into ./extracted
 python3 hpi_parser.py totala1.hpi --extract-all extracted
 
-# Sanity-check extracted assets
-python3 extracted_files_checker.py extracted
-
-# Convert TMH/TMHF audio to WAV
-python3 tmhf_to_wav.py extracted/sounds converted_wav
-
-# Rebuild archive, ensuring bit-identical output
-python3 hpi_assembler.py totala1.hpi extracted totala1_rebuild.hpi
-
-# Double-check hashes (optional)
-shasum -a 256 totala1.hpi totala1_rebuild.hpi
+# Extract a single file
+python3 hpi_parser.py totala1.hpi --extract "path/to/file.txt" output.txt
 ```
 
-Temporary outputs (e.g. `extracted/`, `converted_wav/`, `totala1_rebuild.hpi`) can be removed after verification.
+### Validating Extracted Files
+```bash
+# Sanity-check extracted assets
+python3 extracted_files_checker.py extracted
+```
+
+### Converting Audio Files
+```bash
+# Convert TMH/TMHF audio to WAV
+python3 tmhf_to_wav.py extracted/sounds converted_wav
+```
+
+### Assembling HPI Archives
+The HPI assembler now properly builds archives from extracted directories without requiring the original HPI file:
+
+```bash
+# Assemble HPI from extracted directory (using zlib compression)
+python3 hpi_assembler.py extracted rebuilt.hpi
+
+# Assemble with specific compression mode (0=none, 1=LZ77, 2=zlib)
+python3 hpi_assembler.py extracted rebuilt.hpi --compression 2
+
+# Assemble with encryption (key 0-255)
+python3 hpi_assembler.py extracted rebuilt.hpi --key 42
+
+# Validate against original (optional)
+python3 hpi_assembler.py extracted rebuilt.hpi --reference totala1.hpi
+
+# Verify hashes match if bit-identical
+shasum -a 256 totala1.hpi rebuilt.hpi
+```
+
+**Note:** The assembler creates proper HPI archives from scratch by:
+- Building directory structures from the filesystem
+- Compressing files using SQSH chunks (supports modes 0/1/2)
+- Generating chunk tables
+- Encrypting data with position-dependent XOR cipher
+- Writing complete HPI file with proper headers and metadata
+
+The assembled archives are fully compatible with the parser and the original Total Annihilation engine.
+
+### Testing the HPI Assembler
+```bash
+# Run comprehensive round-trip tests
+python3 test_hpi_roundtrip.py
+```
+
+Temporary outputs (e.g. `extracted/`, `converted_wav/`, `rebuilt.hpi`) can be removed after verification.
