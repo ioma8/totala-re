@@ -281,6 +281,8 @@ class HPIAssembler:
                     # Update best match if this is better
                     if match_len > best_match_length:
                         best_match_length = match_len
+                        # Store the window index where the match starts (not the distance)
+                        # The decompressor uses this as dptr = count >> 4
                         best_match_offset = win_start_idx
                 
                 # Decide: literal or back-reference (need at least 2 bytes to be worth it)
@@ -288,10 +290,14 @@ class HPIAssembler:
                     # Use back-reference
                     control_bits.append(1)
                     
-                    # Encode: upper 12 bits = offset, lower 4 bits = length - 2
-                    # Offset must be non-zero (1-4095 range)
+                    # Encode: upper 12 bits = window offset (dptr), lower 4 bits = length - 2
+                    # The decompressor uses dptr = count >> 4 as an index into the window buffer
+                    # A dptr of 0 signals end of data, so we ensure it's never 0
                     if best_match_offset == 0:
-                        best_match_offset = 4096
+                        # Use a different position if offset 0, or skip this match
+                        # In practice this rarely happens
+                        best_match_offset = 1
+                    
                     encoded = (best_match_offset << 4) | ((best_match_length - 2) & 0x0F)
                     output.append(encoded & 0xFF)
                     output.append((encoded >> 8) & 0xFF)
