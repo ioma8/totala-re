@@ -1,7 +1,6 @@
-# Windows & External API Usage – Phase 1 Map
+# Windows & External API Reference
 
-Data source: `rabin2 -i TotalA.exe` plus call-site inspection during Phase 1.  
-This snapshot groups imported functions by library and annotates known call sites or subsystems that rely on them.
+Data source: `rabin2 -i TotalA.exe` plus call-site inspection. This snapshot groups imported functions by library and annotates known call sites or subsystems that rely on them.
 
 ## KERNEL32.dll
 
