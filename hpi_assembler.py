@@ -260,16 +260,20 @@ class HPIAssembler:
                 max_match = min(17, len(data) - pos)
                 
                 # Search backwards through recently added data for best match
-                # This is more efficient than searching the entire window
-                for offset in range(1, min(window_pos, 4096)):
+                # Limit search to reasonable range for performance (max 256 recent positions)
+                search_limit = min(window_pos - 1, 256)
+                for back_distance in range(1, search_limit + 1):
+                    # Calculate window index for this back distance
+                    win_start_idx = (window_pos - back_distance) & 0xFFF
+                    
                     # Quick check: does first byte match?
-                    if window[(window_pos - offset) & 0xFFF] != data[pos]:
+                    if window[win_start_idx] != data[pos]:
                         continue
                     
                     # Find match length
                     match_len = 1
                     while match_len < max_match:
-                        win_idx = (window_pos - offset + match_len) & 0xFFF
+                        win_idx = (win_start_idx + match_len) & 0xFFF
                         if window[win_idx] != data[pos + match_len]:
                             break
                         match_len += 1
@@ -277,10 +281,7 @@ class HPIAssembler:
                     # Update best match if this is better
                     if match_len > best_match_length:
                         best_match_length = match_len
-                        # Calculate offset from current position
-                        best_match_offset = (window_pos - offset) & 0xFFF
-                        if best_match_offset == 0:
-                            best_match_offset = 4096
+                        best_match_offset = win_start_idx
                 
                 # Decide: literal or back-reference (need at least 2 bytes to be worth it)
                 if best_match_length >= 2:
@@ -288,6 +289,9 @@ class HPIAssembler:
                     control_bits.append(1)
                     
                     # Encode: upper 12 bits = offset, lower 4 bits = length - 2
+                    # Offset must be non-zero (1-4095 range)
+                    if best_match_offset == 0:
+                        best_match_offset = 4096
                     encoded = (best_match_offset << 4) | ((best_match_length - 2) & 0x0F)
                     output.append(encoded & 0xFF)
                     output.append((encoded >> 8) & 0xFF)
