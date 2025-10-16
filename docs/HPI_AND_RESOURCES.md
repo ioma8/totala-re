@@ -81,3 +81,8 @@ The loader cooperates with the HPI tooling above to surface every shipped asset.
 6. TMH/TMHF-wrapped audio files are post-processed by stripping the 64-byte header and writing a RIFF/WAVE wrapper (`tmhf_to_wav.py`).
 
 These steps exactly mirror the behaviour observed in `totala.exe`, providing bit-for-bit identical payloads for all shipped archives.
+
+### Reassembly (`hpi_assembler.py`)
+- Validates that the extracted directory tree matches the decompressed payloads in a reference HPI archive.
+- Emits a byte-identical copy of the original archive (recompression is not yet implemented; SQSH chunk data is preserved as-is).
+- Computes SHA-256 hashes for the source and rebuilt archives to confirm equality.

@@ -9,5 +9,5 @@ Rapid reverse engineering of Total Annihilation’s engine with emphasis on HPI 
 
 ## Current Artefacts
 - **Docs** – see `docs/PROJECT_PLAN.md`, `docs/ENGINE_OVERVIEW.md`, `docs/HPI_AND_RESOURCES.md`, plus supporting references in `docs/`.
-- **Tools** – `hpi_parser.py`, `extracted_files_checker.py`, `tmhf_to_wav.py` support archive extraction, validation, and audio conversion.
+- **Tools** – `hpi_parser.py`, `extracted_files_checker.py`, `tmhf_to_wav.py`, `hpi_assembler.py` support archive extraction, validation, audio conversion, and archive reassembly.
 - **Status** – HPI/SQSH formats decoded, TMH audio normalised, groundwork laid for engine reimplementation.
