@@ -55,12 +55,14 @@ Directory Tree:
 - ✅ Recursive directory traversal - WORKING
 - ✅ File discovery - All 15 root directories + subdirectories
 - ✅ Filename decoding - Correct offset handling (file_offset - 0x14)
-- ❌ File extraction (not yet implemented)
-- ❌ Decompression (algorithm TBD - likely LZSS)
+- ✅ File extraction & decompression (SQSH LZ77/zlib implemented)
+- ✅ TMH/TMHF audio normalisation (64-byte header removed → RIFF/WAVE)
 
 **Files Created:**
 - `hpi_parser.py` - **FULLY WORKING** Python parser (~250 lines)
 - `HPI_PARSER_COMPLETE.md` - Complete format specification
+- `extracted_files_checker.py` - Post-extraction sanity validator
+- `tmhf_to_wav.py` - TMH(F) audio to standard WAV converter
 
 ---
 

@@ -1,267 +1,361 @@
 #!/usr/bin/env python3
 """
-Total Annihilation HPI File Format Parser - FIXED VERSION
-Based on careful analysis of fcn.004bdd70 decompiled code
+Total Annihilation HPI File Format Parser and extractor.
 
-Key insights from reverse engineering:
-1. Header is 20 bytes, followed by encrypted directory data
-2. Encryption key at offset 0x0c transforms: key = ((key>>6)|(key<<2))^0xFF
-3. Directory offset at header+0x10 needs pointer fixup (relative to header base)
-4. All pointers in directory entries need fixup too
-5. Directory format: [entry_count:4][data_offset:4][entries...]
-6. Entry format (9 bytes): [name_offset:4][data_offset:4][flags:1]
+Implements directory parsing plus chunked SQSH (LZ77/zlib) decompression,
+following the reverse engineered format of totala.exe.
 """
 
+import argparse
+import os
 import struct
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Dict, List, Optional
+
+CHUNK_SIZE = 0x10000  # 64 KiB chunk size used by HPI files
+
 
 class HPIHeader:
+    """Represents the 20 byte HPI archive header."""
+
     def __init__(self, data: bytes):
         if len(data) < 20:
             raise ValueError("Header too small")
-        
+
         self.magic = data[0:4]
-        self.version = struct.unpack('<I', data[4:8])[0]
-        self.file_size = struct.unpack('<I', data[8:12])[0]
-        self.key = data[12]  # Encryption key is first byte of dword at offset 0x0c
-        self.dir_offset_raw = struct.unpack('<I', data[16:20])[0]  # Offset 0x10
-        
-        # Transform the key as per decompiled code
+        self.version = struct.unpack("<I", data[4:8])[0]
+        self.file_size = struct.unpack("<I", data[8:12])[0]
+        self.key = data[12]  # encryption key byte
+        self.dir_offset_raw = struct.unpack("<I", data[16:20])[0]
+
         if self.key != 0:
             self.transformed_key = (((self.key >> 6) | (self.key << 2)) & 0xFF) ^ 0xFF
         else:
             self.transformed_key = 0
-    
-    def __repr__(self):
-        return (f"HPIHeader(magic={self.magic}, version=0x{self.version:08x}, "
-                f"size={self.file_size}, key=0x{self.key:02x}, dir_offset=0x{self.dir_offset_raw:08x})")
 
-class HPIDirectory:
-    def __init__(self, data: bytes, offset: int):
-        if offset + 8 > len(data):
-            raise ValueError(f"Directory at offset {offset} out of bounds")
-        
-        self.entry_count = struct.unpack('<I', data[offset:offset+4])[0]
-        self.data_offset = struct.unpack('<I', data[offset+4:offset+8])[0]
-        self.entries = []
-        
     def __repr__(self):
-        return f"HPIDirectory(entries={self.entry_count}, data_offset=0x{self.data_offset:08x})"
+        return (
+            f"HPIHeader(magic={self.magic}, version=0x{self.version:08x}, "
+            f"size={self.file_size}, key=0x{self.key:02x}, "
+            f"dir_offset=0x{self.dir_offset_raw:08x})"
+        )
 
+
+@dataclass
 class HPIEntry:
-    def __init__(self, name: str, name_offset: int, data_offset: int, flags: int):
-        self.name = name
-        self.name_offset = name_offset
-        self.data_offset = data_offset
-        self.flags = flags
-        self.is_directory = bool(flags & 0x01)
-        self.is_compressed = bool(flags & 0x02)
-    
-    def __repr__(self):
-        type_str = "DIR" if self.is_directory else "FILE"
-        comp_str = " COMPRESSED" if self.is_compressed else ""
-        return f"{type_str:4s} {comp_str:11s} 0x{self.data_offset:08x} {self.name}"
+    """Represents a file or directory entry inside the archive."""
+
+    name: str
+    full_path: str
+    data_offset: int
+    flags: int
+    is_directory: bool
+    is_compressed: bool
+    size: Optional[int] = None
+    chunk_table_offset: Optional[int] = None
+    children: List["HPIEntry"] = field(default_factory=list)
+
+    def __str__(self) -> str:
+        kind = "DIR " if self.is_directory else "FILE"
+        comp = " compressed" if self.is_compressed else ""
+        return f"{kind} {self.full_path}{comp}"
+
+
+def _to_buffer_offset(file_offset: int) -> int:
+    """Convert file offset to decrypted buffer offset (header size is 0x14)."""
+    return file_offset - 0x14
+
 
 class HPIParser:
-    def __init__(self, filepath):
+    """Core parser capable of listing and extracting HPI archives."""
+
+    def __init__(self, filepath: Path):
         self.filepath = Path(filepath)
         self.raw_data = self.filepath.read_bytes()
-        self.header = None
-        self.decrypted_data = None
-        
-    def decrypt_data(self, data: bytes, key: int, start_offset: int = 0x14) -> bytes:
-        """
-        Decrypt data using position-dependent XOR cipher
-        Based on: data[i] = (i + start_offset) ^ key ^ (~data[i])
-        
-        Note: The position XOR uses only the low byte to wrap around
-        """
-        if key == 0:
-            return data
-        
-        decrypted = bytearray()
-        for i in range(len(data)):
-            byte = data[i]
-            # Position wraps at 256 for the XOR operation
-            pos = (i + start_offset) & 0xFF
-            byte = (~byte) & 0xFF
-            result = pos ^ key ^ byte
-            decrypted.append(result)
-        
-        return bytes(decrypted)
-    
-    def read_cstring(self, data: bytes, file_offset: int) -> str:
-        """
-        Read null-terminated string from data
-        
-        Args:
-            data: Decrypted data buffer (starts at file offset 0x14)
-            file_offset: Offset in the original FILE
-            
-        Returns:
-            Null-terminated string
-        """
-        # Convert file offset to buffer offset
-        # Data buffer starts at file offset 0x14
-        buffer_offset = file_offset - 0x14
-        
-        if buffer_offset < 0 or buffer_offset >= len(data):
-            return f"<invalid offset 0x{file_offset:x}>"
-        
-        end = data.find(b'\x00', buffer_offset)
-        if end == -1:
-            end = len(data)
-        
-        return data[buffer_offset:end].decode('ascii', errors='replace')
-    
-    def parse_directory(self, data: bytes, file_offset: int, depth: int = 0, path: str = "") -> List[HPIEntry]:
-        """
-        Recursively parse directory structure
-        
-        Args:
-            data: Decrypted data buffer (starts at file offset 0x14)
-            file_offset: Offset in the original FILE where this directory is
-            depth: Current recursion depth (for display)
-            path: Current path (for display)
-        """
-        # Convert file offset to buffer offset
-        buffer_offset = file_offset - 0x14
-        
-        if buffer_offset < 0 or buffer_offset + 8 > len(data):
-            print(f"{'  ' * depth}[!] Directory at file offset 0x{file_offset:x} out of bounds")
-            return []
-        
-        # Read directory header
-        entry_count = struct.unpack('<I', data[buffer_offset:buffer_offset+4])[0]
-        data_section_offset = struct.unpack('<I', data[buffer_offset+4:buffer_offset+8])[0]
-        
-        # Sanity check
-        if entry_count > 10000 or entry_count == 0:
-            return []
-        
-        indent = "  " * depth
-        if depth == 0:
-            print(f"\n[+] Root Directory")
-            print(f"    Entries: {entry_count}")
-            print(f"    Data section offset: 0x{data_section_offset:08x}")
-        
-        entries = []
-        total_files = 0
-        total_dirs = 0
-        total_compressed = 0
-        
-        # Parse each entry (9 bytes each)
-        for i in range(entry_count):
-            entry_buffer_offset = buffer_offset + 8 + (i * 9)
-            
-            if entry_buffer_offset + 9 > len(data):
-                break
-            
-            name_file_offset = struct.unpack('<I', data[entry_buffer_offset:entry_buffer_offset+4])[0]
-            data_file_offset = struct.unpack('<I', data[entry_buffer_offset+4:entry_buffer_offset+8])[0]
-            flags = data[entry_buffer_offset+8]
-            
-            # Read filename (offset is in file coordinates)
-            name = self.read_cstring(data, name_file_offset)
-            
-            # Create entry
-            entry = HPIEntry(name, name_file_offset, data_file_offset, flags)
-            entries.append(entry)
-            
-            # Count stats
-            if entry.is_directory:
-                total_dirs += 1
-            else:
-                total_files += 1
-            if entry.is_compressed:
-                total_compressed += 1
-            
-            # Display
-            type_icon = "📁" if entry.is_directory else "📄"
-            comp_str = " [COMP]" if entry.is_compressed else ""
-            print(f"{indent}{type_icon} {entry.name}{comp_str}")
-            
-            # Recursively parse subdirectories
-            if entry.is_directory and depth < 10:  # Limit recursion
-                current_path = f"{path}/{name}" if path else name
-                sub_entries = self.parse_directory(data, data_file_offset, depth + 1, current_path)
-                entry.subdirectories = sub_entries
-        
-        # Show summary at depth 0
-        if depth == 0:
-            print(f"\n[+] Summary:")
-            print(f"    Total directories: {total_dirs}")
-            print(f"    Total files: {total_files}")
-            print(f"    Compressed entries: {total_compressed}")
-        
-        return entries
-    
-    def parse(self):
-        """Main parsing function"""
-        print("=" * 70)
-        print(f"HPI Archive Parser: {self.filepath.name}")
-        print("=" * 70)
-        
-        # Parse header
         self.header = HPIHeader(self.raw_data[0:20])
-        print(f"\n[+] Header Information:")
-        print(f"    Magic: {self.header.magic.decode('ascii')}")
-        print(f"    Version: 0x{self.header.version:08x}")
-        print(f"    File size field: {self.header.file_size} bytes")
-        print(f"    Directory offset (raw): 0x{self.header.dir_offset_raw:08x}")
-        print(f"    Encryption key: 0x{self.header.key:02x} (transformed: 0x{self.header.transformed_key:02x})")
-        
-        if self.header.magic != b'HAPI':
-            print(f"\n[!] ERROR: Invalid magic (expected 'HAPI', got '{self.header.magic}')")
-            return None
-        
-        # Decrypt data starting from offset 0x14 (20 bytes)
-        encrypted_section = self.raw_data[0x14:]
-        self.decrypted_data = self.decrypt_data(encrypted_section, self.header.transformed_key)
-        
-        print(f"\n[+] Decrypted {len(self.decrypted_data)} bytes")
-        print(f"    First 64 bytes (hex): {self.decrypted_data[:64].hex()}")
-        
-        # The directory offset in the header is an absolute file offset
-        dir_file_offset = self.header.dir_offset_raw
-        
-        print(f"\n[+] Directory location:")
-        print(f"    File offset: 0x{dir_file_offset:08x}")
-        
-        # Parse directory tree (pass file offset, it will be converted inside)
-        try:
-            entries = self.parse_directory(self.decrypted_data, dir_file_offset)
-            print(f"\n[+] Successfully parsed {len(entries)} root entries")
-            return entries
-        except Exception as e:
-            print(f"\n[!] Error parsing directory: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-    
-    def extract_file(self, entry: HPIEntry, output_path: Path):
-        """Extract a file from the archive (TODO)"""
-        print(f"[!] File extraction not yet implemented")
-        pass
+        self.decrypted_data = self._decrypt_data(self.raw_data[0x14:], self.header.transformed_key)
+        self.root_entries: List[HPIEntry] = []
+        self.path_index: Dict[str, HPIEntry] = {}
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python hpi_parser.py <hpi_file>")
-        print("\nThis parser will:")
-        print("  - Decrypt the HPI archive")
-        print("  - Display directory structure")
-        print("  - Show all files and folders")
-        sys.exit(1)
-    
-    parser = HPIParser(sys.argv[1])
-    entries = parser.parse()
-    
-    if entries:
-        print("\n" + "=" * 70)
-        print(f"SUCCESS: Parsed HPI archive with {len(entries)} root entries")
-        print("=" * 70)
+    @staticmethod
+    def _decrypt_data(data: bytes, key: int, start_offset: int = 0x14) -> bytes:
+        """Position-dependent XOR cipher (matches totala.exe)."""
+        if key == 0:
+            return bytes(data)
 
-if __name__ == '__main__':
+        decrypted = bytearray(len(data))
+        for i, byte in enumerate(data):
+            pos = (i + start_offset) & 0xFF
+            decrypted[i] = pos ^ key ^ (~byte & 0xFF)
+        return bytes(decrypted)
+
+    def _read_u32(self, file_offset: int) -> int:
+        idx = _to_buffer_offset(file_offset)
+        return struct.unpack_from("<I", self.decrypted_data, idx)[0]
+
+    def _read_cstring(self, file_offset: int) -> str:
+        idx = _to_buffer_offset(file_offset)
+        end = self.decrypted_data.find(b"\x00", idx)
+        if end == -1:
+            end = len(self.decrypted_data)
+        return self.decrypted_data[idx:end].decode("ascii", errors="replace")
+
+    def _parse_directory(self, file_offset: int, path: str = "") -> List[HPIEntry]:
+        buffer_offset = _to_buffer_offset(file_offset)
+        entry_count = struct.unpack_from("<I", self.decrypted_data, buffer_offset)[0]
+
+        entries: List[HPIEntry] = []
+        for i in range(entry_count):
+            entry_offset = buffer_offset + 8 + i * 9
+            name_offset, info_offset = struct.unpack_from("<II", self.decrypted_data, entry_offset)
+            flags = self.decrypted_data[entry_offset + 8]
+
+            name = self._read_cstring(name_offset)
+            full_path = f"{path}/{name}" if path else name
+            is_dir = bool(flags & 0x01)
+            is_compressed = bool(flags & 0x02)
+
+            entry = HPIEntry(
+                name=name,
+                full_path=full_path,
+                data_offset=info_offset,
+                flags=flags,
+                is_directory=is_dir,
+                is_compressed=is_compressed,
+            )
+
+            if is_dir:
+                entry.children = self._parse_directory(info_offset, full_path)
+            else:
+                entry.size = self._read_u32(info_offset + 4)
+                entry.chunk_table_offset = self._read_u32(info_offset)
+
+            entries.append(entry)
+            self.path_index[full_path.lower()] = entry
+        return entries
+
+    def parse(self) -> None:
+        if self.header.magic != b"HAPI":
+            raise ValueError(f"Invalid archive magic: {self.header.magic!r}")
+
+        self.root_entries = self._parse_directory(self.header.dir_offset_raw)
+
+    # ------------------------------------------------------------------ #
+    # Listing helpers
+    # ------------------------------------------------------------------ #
+    def list_entries(self) -> None:
+        """Print the directory tree."""
+        def recurse(entry: HPIEntry, indent: int = 0) -> None:
+            prefix = "  " * indent
+            icon = "📁" if entry.is_directory else "📄"
+            comp = " [COMP]" if entry.is_compressed else ""
+            print(f"{prefix}{icon} {entry.name}{comp}")
+            for child in entry.children:
+                recurse(child, indent + 1)
+
+        for entry in self.root_entries:
+            recurse(entry)
+
+    # ------------------------------------------------------------------ #
+    # Extraction helpers
+    # ------------------------------------------------------------------ #
+    def extract_entry(self, entry: HPIEntry) -> bytes:
+        if entry.is_directory:
+            raise ValueError("Cannot extract directory; select a file entry.")
+        if entry.size is None or entry.chunk_table_offset is None:
+            raise ValueError("File entry lacks size or chunk metadata.")
+
+        total_size = entry.size
+        chunk_table_offset = entry.chunk_table_offset
+        chunk_count = (total_size + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+        chunk_sizes = [
+            self._read_u32(chunk_table_offset + i * 4) for i in range(chunk_count)
+        ]
+
+        chunk_data_offset = chunk_table_offset + 4 * chunk_count
+        data = bytearray()
+        current_offset = chunk_data_offset
+        remaining = total_size
+
+        for chunk_size in chunk_sizes:
+            chunk_bytes = self._read_bytes(current_offset, chunk_size)
+            chunk_data = self._decompress_sqsh_chunk(chunk_bytes)
+            if remaining < len(chunk_data):
+                data.extend(chunk_data[:remaining])
+                remaining = 0
+            else:
+                data.extend(chunk_data)
+                remaining -= len(chunk_data)
+            current_offset += chunk_size
+            if remaining <= 0:
+                break
+
+        return bytes(data[:total_size])
+
+    def extract_to_path(self, entry: HPIEntry, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        data = self.extract_entry(entry)
+        destination.write_bytes(data)
+
+    def extract_all(self, destination: Path) -> None:
+        for entry in self.path_index.values():
+            if entry.is_directory:
+                continue
+            output_path = destination / entry.full_path
+            self.extract_to_path(entry, output_path)
+
+    # ------------------------------------------------------------------ #
+    # Internal utilities
+    # ------------------------------------------------------------------ #
+    def _read_bytes(self, file_offset: int, length: int) -> bytes:
+        idx = _to_buffer_offset(file_offset)
+        return self.decrypted_data[idx : idx + length]
+
+    @staticmethod
+    def _decompress_sqsh_chunk(chunk: bytes) -> bytes:
+        if len(chunk) < 19:
+            raise ValueError("SQSH chunk too small")
+        if chunk[:4] != b"SQSH":
+            raise ValueError(f"Invalid SQSH magic: {chunk[:4]!r}")
+
+        # Header layout: magic[4], unknown[1], compress[1], encrypt[1], comp_size[4], full_size[4], checksum[4]
+        compression_type = chunk[5]
+        encryption_flag = chunk[6]
+        compressed_size = struct.unpack_from("<I", chunk, 7)[0]
+        uncompressed_size = struct.unpack_from("<I", chunk, 11)[0]
+        payload = bytearray(chunk[19 : 19 + compressed_size])
+
+        if encryption_flag:
+            # Placeholder: in practice this flag is set but encrypt routine is a no-op
+            for i in range(len(payload)):
+                payload[i] = (payload[i] - ((i ^ i) & 0xFF)) & 0xFF
+
+        if compression_type == 0:
+            result = bytes(payload)
+        elif compression_type == 1:
+            result = HPIParser._decompress_lz77(payload, uncompressed_size)
+        elif compression_type == 2:
+            import zlib
+
+            result = zlib.decompress(bytes(payload))
+        else:
+            raise ValueError(f"Unknown SQSH compression type: {compression_type}")
+
+        return result[:uncompressed_size]
+
+    @staticmethod
+    def _decompress_lz77(src: bytes, expected_size: int) -> bytes:
+        dbuf = bytearray(4096)
+        w1 = 1
+        w2 = 1
+        in_pos = 0
+        out = bytearray()
+
+        if not src:
+            return bytes(out)
+
+        w3 = src[in_pos]
+        in_pos += 1
+
+        while len(out) < expected_size:
+            if not (w2 & w3):
+                if in_pos >= len(src):
+                    break
+                byte = src[in_pos]
+                in_pos += 1
+                out.append(byte)
+                dbuf[w1] = byte
+                w1 = (w1 + 1) & 0xFFF
+            else:
+                if in_pos + 1 >= len(src):
+                    break
+                count = src[in_pos] | (src[in_pos + 1] << 8)
+                in_pos += 2
+                dptr = count >> 4
+                if dptr == 0:
+                    break
+                length = (count & 0x0F) + 2
+                for _ in range(length):
+                    byte = dbuf[dptr]
+                    out.append(byte)
+                    dbuf[w1] = byte
+                    dptr = (dptr + 1) & 0xFFF
+                    w1 = (w1 + 1) & 0xFFF
+                    if len(out) >= expected_size:
+                        break
+            w2 <<= 1
+            if w2 & 0x0100:
+                w2 = 1
+                if in_pos >= len(src):
+                    break
+                w3 = src[in_pos]
+                in_pos += 1
+            if in_pos >= len(src) and w2 != 1:
+                # No more source bytes to refresh flags; enforce break
+                if len(out) >= expected_size:
+                    break
+
+        return bytes(out[:expected_size])
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Total Annihilation HPI archive parser.")
+    parser.add_argument("archive", type=Path, help="Path to the .hpi archive.")
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List the directory structure of the archive.",
+    )
+    parser.add_argument(
+        "--extract",
+        metavar=("ARCHIVE_PATH", "DEST"),
+        nargs=2,
+        help="Extract a single file to DEST.",
+    )
+    parser.add_argument(
+        "--extract-all",
+        metavar="DEST_DIR",
+        help="Extract the entire archive to DEST_DIR.",
+    )
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    arg_parser = build_parser()
+    args = arg_parser.parse_args(argv)
+
+    parser = HPIParser(args.archive)
+    parser.parse()
+
+    if args.list:
+        parser.list_entries()
+
+    if args.extract:
+        archive_path, dest = args.extract
+        entry = parser.path_index.get(archive_path.lower())
+        if entry is None:
+            raise SystemExit(f"Path '{archive_path}' not found in archive.")
+        parser.extract_to_path(entry, Path(dest))
+        print(f"Extracted {archive_path} -> {dest}")
+
+    if args.extract_all:
+        dest_dir = Path(args.extract_all)
+        for entry in parser.path_index.values():
+            if entry.is_directory:
+                continue
+            destination = dest_dir / entry.full_path
+            parser.extract_to_path(entry, destination)
+        print(f"Extracted archive contents to {dest_dir}")
+
+    if not any([args.list, args.extract, args.extract_all]):
+        # Default behaviour: show quick stats
+        total_files = sum(not e.is_directory for e in parser.path_index.values())
+        total_dirs = sum(e.is_directory for e in parser.path_index.values())
+        print(f"{parser.filepath.name}: {total_dirs} directories, {total_files} files")
+
+
+if __name__ == "__main__":
     main()

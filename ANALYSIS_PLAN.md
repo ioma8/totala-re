@@ -262,6 +262,8 @@ Analysis will be considered complete when:
 - ✅ Resource loading pipeline traced (CDLISTS → HPI scanning)
 - ✅ Frame scheduler decoded (task queue, timing)
 - ✅ Key globals mapped (0x511de8 game state, 0x51fbd0 scheduler, etc.)
+- ✅ SQSH compression behaviour replicated (LZ77 & zlib parity with totala.exe)
+- ✅ TMH/TMHF audio wrapper documented; batch conversion pipeline to RIFF/WAVE
 
 **New Documents:**
 - RAPID_ANALYSIS.md - Comprehensive technical report
@@ -272,11 +274,11 @@ Analysis will be considered complete when:
 
 **Next Priorities:**
 1. ✅ HPI parser complete - DONE (2025-10-16)
-2. File extraction from HPI archives
-3. Compression algorithm identification
+2. ✅ File extraction from HPI archives (chunk tables + SQSH decode)
+3. ✅ Compression algorithm identification (LZ77 window 0x1000, zlib fallback)
 4. Map 0x511de8 game state structure (5555 references)
 5. Analyze graphics/audio initialization
-6. Begin Rust reimplementation (HPI reader first)
+6. Begin Rust reimplementation (HPI reader first) – can now mirror Python implementation
 
 **Latest Update (2025-10-16 17:14 UTC):**
 - HPI parser fully working after iterative debugging

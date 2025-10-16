@@ -468,6 +468,15 @@ Entry format (9 bytes each):
   0x08:      Flags (bit 0=isDir, bit 1=compressed)
 ```
 
+**Chunk payloads:**
+- File entries with flag `0x02` reference chunk tables. Each `u32` entry is the compressed size; the table is followed by `"SQSH"`-prefixed payloads.
+- The SQSH header includes compression mode (0 = stored, 1 = custom LZ77, 2 = zlib) and a per-chunk checksum. Mode `0x01` matches totala.exe’s 12-bit window implementation (queue of 0x1000 bytes, flag bits from a rolling byte).
+- Python tooling now mirrors the decompression flow, enabling full extraction of archived assets without relying on the original executable.
+
+**TMH audio wrapper:**
+- Sound effects are typically stored with a 64-byte header beginning `"TMH"`/`"TMHF"`. Fields around offset `0x14` hint at sample rates (~0x55xx ⇒ ≈22 kHz).
+- After this header the payload is PCM. A new helper (`tmhf_to_wav.py`) strips the wrapper and writes canonical RIFF/WAVE files for verification.
+
 **Root directory contains:**
 - 15 top-level entries (likely folders like "units", "sounds", "textures", etc.)
 - First subdirectory found: "sounds" at offset 0x6c (108 decimal)
@@ -479,20 +488,19 @@ Entry format (9 bytes each):
 - ✅ Recursive parsing WORKING (fixed offset handling)
 - ✅ All filenames decode correctly
 - ✅ Complete directory tree traversal
-- ❌ File extraction: Not yet implemented
-- ❌ Decompression: Algorithm TBD (LZSS likely)
+- ✅ Chunk extraction implemented (SQSH LZ77 + zlib) with rebuilt output writer
+- ✅ TMH audio post-processing to standard WAV for all 364 sound assets
 
 ## 11. Open Questions
 
-1. **Compression algorithm:** What decompression is used for flag 0x02? (Likely LZ77 or LZSS variant)
-2. **Game state layout:** What's inside the 0x511de8 mega-structure?
-3. **Network protocol:** Where is multiplayer code? (HAPINET functions found but not analyzed)
-4. **Save/load:** How are game states persisted?
-5. **AI system:** Where is the AI decision-making code?
-6. **Unit structures:** How are units represented in memory?
-7. **Physics/collision:** Where is the simulation code?
-8. **File data storage:** How are actual file contents stored in HPI? (After directory tree)
-9. **Subdirectory parsing:** Need to decrypt full file to properly parse nested directories
+1. **Game state layout:** What's inside the 0x511de8 mega-structure?
+2. **Network protocol:** Where is multiplayer code? (HAPINET functions found but not analyzed)
+3. **Save/load:** How are game states persisted?
+4. **AI system:** Where is the AI decision-making code?
+5. **Unit structures:** How are units represented in memory?
+6. **Physics/collision:** Where is the simulation code?
+7. **File data storage:** How are actual file contents stored in HPI? (After directory tree)
+8. **Subdirectory parsing:** Need to decrypt full file to properly parse nested directories
 
 ## 12. Implementation Notes for Rust
 

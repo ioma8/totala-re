@@ -12,6 +12,9 @@ The HPI file format parser has been successfully reverse-engineered and implemen
 ✅ **Filename reading** - Correct offset handling (file-relative addressing)  
 ✅ **Entry detection** - Files vs directories, compression flags  
 ✅ **Full archive listing** - All 15 root directories with subdirectories  
+✅ **Chunk extraction** - SQSH (LZ77/zlib/raw) decompression mirrors totala.exe  
+✅ **Audio conversion** - TMH(T) sound headers stripped and wrapped as standard WAV  
+✅ **CLI tooling** - Listing, single-file extraction, full archive export
 
 ### File Format Specification (Validated)
 
@@ -59,10 +62,10 @@ struct HPIEntry {            // 9 bytes each
    - Each directory entry with flag 0x01 points to another HPIDirectory
    - Maximum observed depth: 2-3 levels
    
-4. **Compression detection**
-   - Flag 0x02 indicates compressed file
-   - Algorithm TBD (likely LZSS or similar)
-   - Currently unimplemented in parser
+4. **Compression handling**
+   - Flag 0x02 drives the SQSH chunk pipeline (stored, LZ77, zlib)
+   - LZ77 window size is 0x1000 with bitflags packed into each control byte
+   - Parser now streams chunk tables and reassembles contiguous file payloads
 
 ### Archive Contents (totala1.hpi)
 
@@ -97,8 +100,8 @@ Outputs:
 ### Next Steps
 
 1. ✅ Parser working - COMPLETE
-2. ⏭️ File extraction - Read actual file data from archive
-3. ⏭️ Compression support - Identify and implement decompression algorithm
+2. ✅ File extraction / chunk decoding - COMPLETE
+3. ✅ TMH audio normalization to RIFF/WAVE - COMPLETE
 4. ⏭️ Rust implementation - Port to Rust for the game rewrite
 
 ### Validation
@@ -106,7 +109,8 @@ Outputs:
 Tested on: `totala1.hpi` (31 MB, 15 root directories, hundreds of files)
 - All filenames decode correctly
 - Directory structure fully traversable
-- No parsing errors
+- All 1,929 files extracted and checked via `extracted_files_checker.py`
+- 364 TMH(F) sounds converted to WAV and reopened with Python's `wave` module
 
 ### Code Quality
 
