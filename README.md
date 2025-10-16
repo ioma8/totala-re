@@ -11,3 +11,26 @@ Rapid reverse engineering of Total Annihilation’s engine with emphasis on HPI 
 - **Docs** – see `docs/PROJECT_PLAN.md`, `docs/ENGINE_OVERVIEW.md`, `docs/HPI_AND_RESOURCES.md`, plus supporting references in `docs/`.
 - **Tools** – `hpi_parser.py`, `extracted_files_checker.py`, `tmhf_to_wav.py`, `hpi_assembler.py` support archive extraction, validation, audio conversion, and archive reassembly.
 - **Status** – HPI/SQSH formats decoded, TMH audio normalised, groundwork laid for engine reimplementation.
+
+## Tool Usage
+```bash
+# List archive contents (console view)
+python3 hpi_parser.py totala1.hpi --list
+
+# Extract everything into ./extracted
+python3 hpi_parser.py totala1.hpi --extract-all extracted
+
+# Sanity-check extracted assets
+python3 extracted_files_checker.py extracted
+
+# Convert TMH/TMHF audio to WAV
+python3 tmhf_to_wav.py extracted/sounds converted_wav
+
+# Rebuild archive, ensuring bit-identical output
+python3 hpi_assembler.py totala1.hpi extracted totala1_rebuild.hpi
+
+# Double-check hashes (optional)
+shasum -a 256 totala1.hpi totala1_rebuild.hpi
+```
+
+Temporary outputs (e.g. `extracted/`, `converted_wav/`, `totala1_rebuild.hpi`) can be removed after verification.

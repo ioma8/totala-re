@@ -1,3 +1,7 @@
 # Ignore binary game assets
 *.exe
 *.hpi
+__pycache__/
+extracted/
+converted_wav/
+totala1_rebuild.hpi
