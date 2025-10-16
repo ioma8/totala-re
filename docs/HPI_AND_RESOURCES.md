@@ -83,6 +83,23 @@ The loader cooperates with the HPI tooling above to surface every shipped asset.
 These steps exactly mirror the behaviour observed in `totala.exe`, providing bit-for-bit identical payloads for all shipped archives.
 
 ### Reassembly (`hpi_assembler.py`)
-- Validates that the extracted directory tree matches the decompressed payloads in a reference HPI archive.
-- Emits a byte-identical copy of the original archive (recompression is not yet implemented; SQSH chunk data is preserved as-is).
-- Computes SHA-256 hashes for the source and rebuilt archives to confirm equality.
+- Assembles proper HPI archives from extracted directory trees, without requiring the original HPI file.
+- Builds directory structures by scanning the filesystem.
+- Compresses files using SQSH chunks with support for three modes:
+  - Mode 0: Uncompressed (stored)
+  - Mode 1: Custom 12-bit LZ77 compression
+  - Mode 2: zlib/DEFLATE compression (default)
+- Generates chunk tables for multi-chunk files (>64 KiB).
+- Encrypts data using the position-dependent XOR cipher.
+- Writes complete HPI files with proper 20-byte headers and metadata.
+- Validates assembled archives by optionally comparing with reference HPI files.
+- Computes SHA-256 hashes for verification.
+
+The assembler implements the exact reverse operations of the parser, enabling full round-trip compatibility:
+1. Scan extracted directory tree and build internal structure.
+2. Compress each file into SQSH chunks and build chunk tables.
+3. Layout directory tree metadata (names, offsets, flags).
+4. Calculate all absolute offsets for strings, directories, files, and chunks.
+5. Encrypt the data buffer using the transformed key.
+6. Write the 20-byte header followed by the encrypted data.
+7. Optionally validate against a reference HPI to ensure extracted files match.

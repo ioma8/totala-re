@@ -199,6 +199,54 @@ def test_empty_directory():
     print("  ✓ Test passed!\n")
 
 
+def test_lz77_compression():
+    """Test HPI assembly with LZ77 compression."""
+    print("Test: LZ77 compression (mode=1)")
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmppath = Path(tmpdir)
+        
+        # Create test data with repetitive content (good for LZ77)
+        test_root = tmppath / "test_data"
+        test_root.mkdir()
+        
+        # Repetitive data
+        repetitive_data = b"ABCDEFGH" * 1000
+        (test_root / "repetitive.bin").write_bytes(repetitive_data)
+        
+        # Text data
+        text_data = "The quick brown fox jumps over the lazy dog. " * 100
+        (test_root / "text.txt").write_text(text_data)
+        
+        # Assemble HPI with LZ77
+        output_hpi = tmppath / "test_lz77.hpi"
+        assembler = HPIAssembler(test_root, compression_mode=1, encryption_key=0)
+        assembler.assemble(output_hpi)
+        
+        assert output_hpi.exists(), "HPI file was not created"
+        print(f"  ✓ Created LZ77-compressed HPI: {output_hpi.stat().st_size} bytes")
+        
+        # Parse and extract
+        parser = HPIParser(output_hpi)
+        parser.parse()
+        
+        extract_root = tmppath / "extracted"
+        extract_root.mkdir()
+        parser.extract_all(extract_root)
+        
+        # Verify repetitive data
+        extracted_rep = extract_root / "repetitive.bin"
+        assert extracted_rep.read_bytes() == repetitive_data, "Repetitive data mismatch"
+        
+        # Verify text data
+        extracted_text = extract_root / "text.txt"
+        assert extracted_text.read_text() == text_data, "Text data mismatch"
+        
+        print(f"  ✓ LZ77-compressed files extracted and validated")
+    
+    print("  ✓ Test passed!\n")
+
+
 def run_all_tests():
     """Run all test cases."""
     print("=" * 60)
@@ -210,6 +258,7 @@ def run_all_tests():
         test_encrypted_assembly()
         test_uncompressed_assembly()
         test_empty_directory()
+        test_lz77_compression()
         
         print("=" * 60)
         print("All tests passed successfully!")

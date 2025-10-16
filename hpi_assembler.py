@@ -223,24 +223,101 @@ class HPIAssembler:
         return bytes(header) + compressed_payload
 
     def _compress_lz77(self, data: bytes) -> bytes:
-        """Compress data using LZ77 (simple implementation, mode 1)."""
-        # For now, use a simple approach - just store uncompressed
-        # A full LZ77 implementation would be complex and the mode 2 (zlib) works well
-        # This is a placeholder that stores data uncompressed in LZ77 format
+        """Compress data using LZ77 with 12-bit window (mode 1).
+        
+        This implements the same LZ77 variant used by Total Annihilation:
+        - 4096-byte sliding window
+        - Control byte with 8 bits (LSB first)
+        - Bit 0: literal, Bit 1: back-reference
+        - Back-reference: 16-bit value with upper 12 bits = offset, lower 4 bits = length-2
+        """
+        if not data:
+            return b""
+        
         output = bytearray()
         pos = 0
+        window = bytearray(4096)  # 12-bit window
+        window_pos = 1  # Start at position 1 like the decompressor
         
         while pos < len(data):
-            # Control byte - all bits 0 means all literals
+            control_byte = 0
+            control_bits = []
+            chunk_start = len(output)
+            
+            # Reserve space for control byte
             output.append(0)
             
-            # Write up to 8 literal bytes
-            for _ in range(8):
-                if pos < len(data):
-                    output.append(data[pos])
-                    pos += 1
-                else:
+            # Process up to 8 symbols
+            for bit_idx in range(8):
+                if pos >= len(data):
                     break
+                
+                # Try to find a match in the window
+                best_match_offset = 0
+                best_match_length = 0
+                
+                # Maximum match length is 17 (encoded as 15 in lower 4 bits, +2)
+                max_match = min(17, len(data) - pos)
+                
+                # Search backwards through recently added data for best match
+                # This is more efficient than searching the entire window
+                for offset in range(1, min(window_pos, 4096)):
+                    # Quick check: does first byte match?
+                    if window[(window_pos - offset) & 0xFFF] != data[pos]:
+                        continue
+                    
+                    # Find match length
+                    match_len = 1
+                    while match_len < max_match:
+                        win_idx = (window_pos - offset + match_len) & 0xFFF
+                        if window[win_idx] != data[pos + match_len]:
+                            break
+                        match_len += 1
+                    
+                    # Update best match if this is better
+                    if match_len > best_match_length:
+                        best_match_length = match_len
+                        # Calculate offset from current position
+                        best_match_offset = (window_pos - offset) & 0xFFF
+                        if best_match_offset == 0:
+                            best_match_offset = 4096
+                
+                # Decide: literal or back-reference (need at least 2 bytes to be worth it)
+                if best_match_length >= 2:
+                    # Use back-reference
+                    control_bits.append(1)
+                    
+                    # Encode: upper 12 bits = offset, lower 4 bits = length - 2
+                    encoded = (best_match_offset << 4) | ((best_match_length - 2) & 0x0F)
+                    output.append(encoded & 0xFF)
+                    output.append((encoded >> 8) & 0xFF)
+                    
+                    # Update window
+                    for i in range(best_match_length):
+                        if pos + i >= len(data):
+                            break
+                        byte = data[pos + i]
+                        window[window_pos] = byte
+                        window_pos = (window_pos + 1) & 0xFFF
+                    
+                    pos += best_match_length
+                else:
+                    # Use literal
+                    control_bits.append(0)
+                    byte = data[pos]
+                    output.append(byte)
+                    
+                    # Update window
+                    window[window_pos] = byte
+                    window_pos = (window_pos + 1) & 0xFFF
+                    pos += 1
+            
+            # Write control byte (LSB first)
+            control_byte = 0
+            for i, bit in enumerate(control_bits):
+                if bit:
+                    control_byte |= (1 << i)
+            output[chunk_start] = control_byte
         
         return bytes(output)
 
