@@ -229,9 +229,9 @@ class HPIParser:
         payload = bytearray(chunk[19 : 19 + compressed_size])
 
         if encryption_flag:
-            # Placeholder: in practice this flag is set but encrypt routine is a no-op
             for i in range(len(payload)):
-                payload[i] = (payload[i] - ((i ^ i) & 0xFF)) & 0xFF
+                key_byte = i & 0xFF
+                payload[i] = ((payload[i] - key_byte) ^ key_byte) & 0xFF
 
         if compression_type == 0:
             result = bytes(payload)

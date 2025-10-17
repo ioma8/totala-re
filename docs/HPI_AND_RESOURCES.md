@@ -40,7 +40,9 @@
 | 1 | Custom 12-bit LZ77 (0x1000 window, flag bits in rolling byte) |
 | 2 | zlib/DEFLATE |
 
-Chunk header layout (`"SQSH"`, mode byte, encrypt flag, compressed size, uncompressed size, checksum). Our Python tooling mirrors totala.exe’s decoder, yielding raw file buffers ready for modern use.
+Chunk header layout (`"SQSH"`, mode byte, encrypt flag, compressed size, uncompressed size, checksum). When the encrypt flag is non-zero the payload is de-whitened with the per-byte rule totala.exe uses:  
+`plain[i] = (cipher[i] - (i & 0xFF) ^ (i & 0xFF)) & 0xFF`.  
+Our Python tooling mirrors the full decoder, yielding raw file buffers ready for modern use.
 
 ### SQSH Decompression Walkthrough (Mode 1)
 The LZ77 variant in TotalA mirrors `fcn.004d35f0` and is implemented in `hpi_parser.py::_decompress_lz77`:
@@ -76,7 +78,7 @@ The loader cooperates with the HPI tooling above to surface every shipped asset.
    - `chunk_table_offset` (first `u32` at `data_offset`)
 5. When extracting:
    - Derive chunk sizes from the table.
-   - Read each SQSH payload, dispatching to the appropriate decompressor.
+   - Read each SQSH payload, undo the encrypt flag with `plain[i] = (cipher[i] - (i & 0xFF)) ^ (i & 0xFF)`, and dispatch to the appropriate decompressor.
    - Concatenate output, truncating to the advertised uncompressed size.
 6. TMH/TMHF-wrapped audio files are post-processed by stripping the 64-byte header and writing a RIFF/WAVE wrapper (`tmhf_to_wav.py`).
 
