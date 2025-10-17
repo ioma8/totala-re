@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "ghidra": {
+      "type": "local",
+      "command": ["uv", "run", "/Users/jakubkolcar/Downloads/GhydraMCP-Complete-v2.0.0-beta.4-20250522-125301/bridge_mcp_hydra.py"],
+      "enabled": true
+    }
+  }
+}

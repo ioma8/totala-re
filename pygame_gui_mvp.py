@@ -21,10 +21,6 @@ import pygame
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 import re
-import re
-import re
-import re
-
 
 # ----------------------------
 # TDF-like parser for .GUI
