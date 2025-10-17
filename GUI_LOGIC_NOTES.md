@@ -4,3 +4,16 @@
 - The resource reader `FUN_004bb7c0` handles both raw and SQSH-packed blobs: it pulls chunk metadata from the handle, uses the same XOR scheme with the per-entry key stored at `handle->info[0xC]`, and, when the chunked flag (`piVar6[2] != 0`) is set, inflates each 0x10000 block through `FUN_004d1970` before copying it into the caller’s buffer.
 - Raw `.GUI` assets start with the ASCII header `[GEDGIZ@a` and are otherwise dense binary; even after undoing the archive XOR they do not expose plain-text keys, implying a compiled TDF layout where identifiers are encoded (lookups later go through hashed-name helpers such as `FUN_004c46c0`/`FUN_004c48c0`).
 - The `SQSH` chunk “encrypted” flag is significant: the engine (and cosmouser’s Go extractor) undo it with `byte_i = i & 0xFF; plain = (cipher - byte_i) ^ byte_i`. Respecting that per-byte tweak converts the `[GEDGIZ@a…]` blocks back into human-readable `[GADGET…]` TDF text.
+
+## MVP Renderer Status
+- Implemented `pygame_gui_mvp.py` to parse and render `.GUI` layouts for quick iteration.
+- Supports: multi-line text aggregation, disabled state, hover/press, quickkeys, and centering sentinels.
+- Limitations: no PCX/GAF/palette art yet; listbox/slider/text input behaviors are stubs.
+- Run from repo root:
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install --upgrade pip setuptools wheel
+  pip install pygame
+  python pygame_gui_mvp.py extracted_by_go/guis/MAINMENU.GUI
+  ```

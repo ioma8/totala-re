@@ -3,5 +3,8 @@
 *.hpi
 __pycache__/
 extracted/
+extracted_by_go/
+_tmp_/
 converted_wav/
 totala1_rebuild.hpi
+

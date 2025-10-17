@@ -34,3 +34,31 @@ shasum -a 256 totala1.hpi totala1_rebuild.hpi
 ```
 
 Temporary outputs (e.g. `extracted/`, `converted_wav/`, `totala1_rebuild.hpi`) can be removed after verification.
+
+## GUI MVP Renderer
+
+A minimal Pygame-based renderer for `.GUI` files is available to validate parsing and layout against real assets.
+
+Features (MVP):
+- Parses TDF-style `.GUI` (sections like `[GADGETx]` and `[COMMON]`).
+- Uses `GADGET0` width/height for window size.
+- Renders labels and button-like controls with hover/press.
+- Supports disabled/grayed state, default focus, and quickkeys (ASCII codes).
+- Handles centering sentinels for `xpos`/`ypos` (`-1` center, `-2` center with offset approximation).
+
+Quick start:
+```bash
+# From repo root
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+pip install pygame
+
+# Run a sample GUI (e.g., main menu)
+python pygame_gui_mvp.py extracted_by_go/guis/MAINMENU.GUI
+```
+
+Notes:
+- This MVP uses simple shapes/colors (no GAF/PCX/palette yet).
+- Next targets: resource loading (palettes, PCX/GAF), listbox/slider/text input handlers, save-under composition, and overlay/merge support.
+
